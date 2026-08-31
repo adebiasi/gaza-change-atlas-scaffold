@@ -1,12 +1,114 @@
 [
-  {
-    "id": "event-2023-10-07",
-    "title": "7 October 2023 \u2014 selected reference event",
-    "date": "2023-10-07",
-    "categories": [
-      "conflict"
-    ],
-    "sources": [],
-    "notes": "Placeholder record. Add independently verified event sources before publication."
-  }
+{
+"id": "event-2023-10-07",
+"title": "7 October 2023 — outbreak of the war",
+"date": "2023-10-07",
+"categories": ["conflict", "reference"],
+"sources": [
+"https://unosat.org/products/3793"
+],
+"notes": "Reference point marking the beginning of the conflict and the subsequent large-scale territorial change across Gaza. The selected map area focuses on Gaza City and northern Gaza, where later satellite assessments documented extensive structural damage.",
+"bbox": [34.38, 31.43, 34.53, 31.57],
+"lat": 31.505,
+"lon": 34.455,
+"zoom": 12
+},
+{
+"id": "event-2023-11-north-gaza",
+"title": "November 2023 — major destruction in North Gaza",
+"date": "2023-11-26",
+"categories": ["conflict", "destruction", "north-gaza"],
+"sources": [
+"https://unosat.org/products/3793"
+],
+"notes": "Satellite assessments documented a rapid increase in damaged and destroyed structures across North Gaza and Gaza Governorate during the first weeks of the conflict. The map focuses on Jabalia and the surrounding northern urban area.",
+"bbox": [34.44, 31.48, 34.54, 31.57],
+"lat": 31.527,
+"lon": 34.485,
+"zoom": 13
+},
+{
+"id": "event-2024-01-gaza-city",
+"title": "January 2024 — extensive destruction in Gaza City",
+"date": "2024-01-07",
+"categories": ["conflict", "destruction", "gaza-city"],
+"sources": [
+"https://unosat.org/products/3793"
+],
+"notes": "UNOSAT's January assessment identified approximately 69,146 affected structures across Gaza. Gaza Governorate recorded one of the largest increases in damage, with Gaza City accounting for the highest number of newly destroyed structures in that assessment.",
+"bbox": [34.43, 31.48, 34.52, 31.54],
+"lat": 31.505,
+"lon": 34.465,
+"zoom": 13
+},
+{
+"id": "event-2024-02-khan-younis",
+"title": "February 2024 — major destruction in Khan Younis",
+"date": "2024-02-29",
+"categories": ["conflict", "destruction", "khan-younis"],
+"sources": [
+"https://unitar.org/about/news-stories/press/35-buildings-affected-gaza-strip"
+],
+"notes": "UNOSAT's February assessment identified 88,868 damaged structures across Gaza. Khan Younis experienced the largest increase compared with the previous assessment, including thousands of newly destroyed structures.",
+"bbox": [34.26, 31.31, 34.34, 31.39],
+"lat": 31.346,
+"lon": 34.305,
+"zoom": 13
+},
+{
+"id": "event-2024-05-deir-al-balah",
+"title": "May 2024 — expanding damage in central Gaza",
+"date": "2024-05-03",
+"categories": ["conflict", "destruction", "central-gaza"],
+"sources": [
+"https://www.un.org/unispal/document/unosat-gaza-strip-31may24/"
+],
+"notes": "UNOSAT identified approximately 137,297 affected structures by May 2024. Deir al-Balah and Gaza experienced the highest increase in newly damaged structures compared with the previous assessment, with Nuseirat among the most affected municipalities in Deir al-Balah.",
+"bbox": [34.37, 31.39, 34.48, 31.48],
+"lat": 31.435,
+"lon": 34.42,
+"zoom": 12
+},
+{
+"id": "event-2024-07-rafah",
+"title": "July 2024 — extensive destruction in Rafah",
+"date": "2024-07-06",
+"categories": ["conflict", "destruction", "rafah"],
+"sources": [
+"https://unosat.org/products/3904"
+],
+"notes": "UNOSAT reported a major increase in damage in Rafah compared with May 2024. Approximately 15,030 newly damaged structures were identified in the Rafah Governorate, including almost 10,100 in Rafah City municipality.",
+"bbox": [34.22, 31.25, 34.29, 31.33],
+"lat": 31.285,
+"lon": 34.255,
+"zoom": 13
+},
+{
+"id": "event-2024-09-rafah-north-gaza",
+"title": "September 2024 — continued destruction in Rafah and Khan Younis",
+"date": "2024-09-06",
+"categories": ["conflict", "destruction", "rafah", "khan-younis"],
+"sources": [
+"https://unosat.org/products/3984"
+],
+"notes": "UNOSAT identified approximately 163,778 affected structures by September 2024. Rafah and Khan Younis experienced the largest increases compared with the July assessment, with Rafah City particularly affected.",
+"bbox": [34.21, 31.25, 34.34, 31.39],
+"lat": 31.305,
+"lon": 34.275,
+"zoom": 12
+},
+{
+"id": "event-2024-12-north-gaza-rafah",
+"title": "December 2024 — extensive cumulative destruction",
+"date": "2024-12-01",
+"categories": ["conflict", "destruction", "north-gaza", "rafah"],
+"sources": [
+"https://unosat.org/products/4047"
+],
+"notes": "UNOSAT's December assessment identified approximately 170,812 affected structures, representing around 69% of structures in Gaza. North Gaza and Rafah showed particularly large increases compared with the September assessment.",
+"bbox": [34.21, 31.25, 34.55, 31.58],
+"lat": 31.40,
+"lon": 34.39,
+"zoom": 11
+}
 ]

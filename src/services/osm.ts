@@ -6,7 +6,5 @@ export type OSMFeature = {
 };
 
 export interface OSMProvider {
-  featuresIntersecting(
-    geometry: GeoJSON.Geometry
-  ): Promise<OSMFeature[]>;
+  featuresIntersecting(geometry: GeoJSON.Geometry): Promise<OSMFeature[]>;
 }

@@ -1,80 +1,1249 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import maplibregl, { Map } from "maplibre-gl";
+import {
+    useEffect,
+    useRef,
+    useState,
+} from "react";
 
-const GAZA_CENTER: [number, number] = [34.46, 31.42];
+import maplibregl, {
+    Map,
+    StyleSpecification,
+} from "maplibre-gl";
 
-export default function DualMap() {
-  const left = useRef<HTMLDivElement>(null);
-  const right = useRef<HTMLDivElement>(null);
-  const leftMap = useRef<Map | null>(null);
-  const rightMap = useRef<Map | null>(null);
+import type {
+    ChangeFeature,
+} from "../src/domain/change";
 
-  useEffect(() => {
-    if (!left.current || !right.current) return;
+import {
+    gibsLayerInfo,
+    initCopernicusWmts,
+    getCopernicusWmtsMatrixSet,
+    copernicusGetTileUrl,
+    resolveGibsDate,
+    type WmtsTileMatrixSet,
+} from "../src/services/gibs";
 
-    const style = {
-      version: 8 as const,
-      sources: {
-        osm: {
-          type: "raster" as const,
-          tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
-          tileSize: 256,
-          attribution: "© OpenStreetMap contributors",
+export type Imagery =
+    | "true-color"
+    | "infrared"
+    | "vegetation"
+    | "sar"
+    | "difference";
+
+type Props = {
+    beforeLabel: string;
+    afterLabel: string;
+
+    beforeDate?: string;
+    afterDate?: string;
+
+    imagery: Imagery;
+
+    changes?: ChangeFeature[];
+
+    /**
+     * Posizione iniziale associata all'evento.
+     *
+     * Viene utilizzata quando cambia viewKey.
+     */
+    initialCenter?: [
+        number,
+        number,
+    ];
+
+    initialZoom?: number;
+
+    /**
+     * Identifica l'evento corrente.
+     *
+     * Se cambia:
+     * - viene utilizzata initialCenter
+     * - viene utilizzato initialZoom
+     *
+     * Se NON cambia:
+     * - imagery/date changes mantengono
+     *   la posizione corrente.
+     */
+    viewKey?: string;
+};
+
+const GAZA_CENTER: [
+    number,
+    number,
+] = [
+    34.46,
+    31.42,
+];
+
+const DEFAULT_ZOOM = 11;
+
+const OSM_ATTRIBUTION =
+    "© OpenStreetMap contributors";
+
+const COPERNICUS_ATTRIBUTION =
+    "© Copernicus Data Space Ecosystem";
+
+const COPERNICUS_PROTOCOL =
+    "copernicus";
+
+/* -------------------------------------------------------------------------- */
+/* Custom MapLibre protocol                                                   */
+/* -------------------------------------------------------------------------- */
+
+let copernicusProtocolRegistered =
+    false;
+
+function registerCopernicusProtocol() {
+    if (
+        copernicusProtocolRegistered
+    ) {
+        return;
+    }
+
+    maplibregl.addProtocol(
+        COPERNICUS_PROTOCOL,
+        async (
+            requestParameters,
+            abortController,
+        ) => {
+            const url =
+                new URL(
+                    requestParameters.url,
+                );
+
+            const imagery =
+                decodeURIComponent(
+                    url.hostname,
+                ) as Imagery;
+
+            const parts =
+                url.pathname
+                    .split("/")
+                    .filter(Boolean)
+                    .map(decodeURIComponent);
+
+            const date =
+                parts[0];
+
+            const z =
+                Number(parts[1]);
+
+            const x =
+                Number(parts[2]);
+
+            const y =
+                Number(parts[3]);
+
+            if (
+                !date ||
+                !Number.isInteger(z) ||
+                !Number.isInteger(x) ||
+                !Number.isInteger(y)
+            ) {
+                throw new Error(
+                    `Invalid Copernicus tile URL: ${requestParameters.url}`,
+                );
+            }
+
+            const tileUrl =
+                copernicusGetTileUrl(
+                    imagery,
+                    date,
+                    z,
+                    x,
+                    y,
+                );
+
+            if (!tileUrl) {
+                throw new Error(
+                    `Unable to build Copernicus tile URL for ${imagery}`,
+                );
+            }
+
+            const response =
+                await fetch(
+                    tileUrl,
+                    {
+                        signal:
+                        abortController.signal,
+                    },
+                );
+
+            if (!response.ok) {
+                throw new Error(
+                    `Copernicus WMTS ${response.status}: ${response.statusText}`,
+                );
+            }
+
+            const data =
+                await response.arrayBuffer();
+
+            return {
+                data,
+            };
         },
-      },
-      layers: [{ id: "osm", type: "raster" as const, source: "osm" }],
-    };
+    );
 
-    const a = new maplibregl.Map({
-      container: left.current,
-      style,
-      center: GAZA_CENTER,
-      zoom: 11,
+    copernicusProtocolRegistered =
+        true;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Helpers                                                                     */
+/* -------------------------------------------------------------------------- */
+
+function changeGeoJSON(
+    changes: ChangeFeature[],
+): GeoJSON.FeatureCollection {
+    return {
+        type: "FeatureCollection",
+
+        features:
+            changes.map((c) => ({
+                type: "Feature",
+
+                properties: {
+                    confidence:
+                    c.confidence,
+                },
+
+                geometry:
+                c.geometry,
+            })),
+    };
+}
+
+function resolveImageryForTiles(
+    imagery: Imagery,
+): Exclude<
+    Imagery,
+    "difference"
+> {
+    if (
+        imagery === "difference"
+    ) {
+        return "true-color";
+    }
+
+    return imagery;
+}
+
+function osmSource():
+    StyleSpecification["sources"][string] {
+    return {
+        type: "raster",
+
+        tiles: [
+            "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+        ],
+
+        tileSize: 256,
+
+        attribution:
+        OSM_ATTRIBUTION,
+    };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Copernicus source                                                          */
+/* -------------------------------------------------------------------------- */
+
+function copernicusSource(
+    imagery: Exclude<
+        Imagery,
+        "difference"
+    >,
+    date: string,
+    maxzoom: number,
+): StyleSpecification["sources"][string] {
+    const tileTemplate =
+        `${COPERNICUS_PROTOCOL}://` +
+        `${encodeURIComponent(
+            imagery,
+        )}/` +
+        `${encodeURIComponent(
+            date,
+        )}/{z}/{x}/{y}`;
+
+    return {
+        type: "raster",
+
+        tiles: [
+            tileTemplate,
+        ],
+
+        tileSize: 512,
+
+        maxzoom,
+
+        attribution:
+        COPERNICUS_ATTRIBUTION,
+    };
+}
+
+function getMaxMapLibreZoom(
+    matrixSet: WmtsTileMatrixSet,
+    fallback: number,
+): number {
+    let maxZoom = fallback;
+
+    for (
+        const matrix of matrixSet.matrices
+        ) {
+        if (
+            matrix.tileWidth !== 512 ||
+            matrix.tileHeight !== 512
+        ) {
+            continue;
+        }
+
+        const zoom =
+            Math.log2(
+                matrix.matrixWidth,
+            );
+
+        if (
+            Number.isInteger(zoom) &&
+            zoom > maxZoom
+        ) {
+            maxZoom = zoom;
+        }
+    }
+
+    return maxZoom;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Style                                                                      */
+/* -------------------------------------------------------------------------- */
+
+function buildStyle(
+    imagery: Imagery,
+    resolvedDate:
+        | string
+        | null
+        | undefined,
+    changes: ChangeFeature[],
+): {
+    style: StyleSpecification;
+    usingSatellite: boolean;
+} {
+    const matrixSet =
+        getCopernicusWmtsMatrixSet();
+
+    const tileImagery =
+        resolveImageryForTiles(
+            imagery,
+        );
+
+    const layerInfo =
+        gibsLayerInfo(
+            tileImagery,
+        );
+
+    const satelliteMaxZoom =
+        matrixSet
+            ? getMaxMapLibreZoom(
+                matrixSet,
+                layerInfo?.maxNativeZoom ??
+                18,
+            )
+            : 18;
+
+    const sources:
+        StyleSpecification["sources"] =
+        {
+            changes: {
+                type: "geojson",
+
+                data:
+                    changeGeoJSON(
+                        changes,
+                    ),
+            },
+        };
+
+    const layers:
+        StyleSpecification["layers"] =
+        [];
+
+    if (
+        resolvedDate &&
+        layerInfo
+    ) {
+        sources.satellite =
+            copernicusSource(
+                tileImagery,
+                resolvedDate,
+                satelliteMaxZoom,
+            );
+
+        layers.push({
+            id: "satellite",
+
+            type: "raster",
+
+            source: "satellite",
+
+            paint: {
+                "raster-opacity": 1,
+            },
+        });
+    } else {
+        sources.osm =
+            osmSource();
+
+        layers.push({
+            id: "osm",
+
+            type: "raster",
+
+            source: "osm",
+        });
+    }
+
+    layers.push({
+        id: "changes",
+
+        type: "fill",
+
+        source: "changes",
+
+        paint: {
+            "fill-opacity": 0.42,
+
+            "fill-outline-color":
+                "#ffffff",
+        },
     });
-    const b = new maplibregl.Map({
-      container: right.current,
-      style,
-      center: GAZA_CENTER,
-      zoom: 11,
-    });
 
-    leftMap.current = a;
-    rightMap.current = b;
+    return {
+        style: {
+            version: 8,
 
-    let syncing = false;
-    const sync = (source: Map, target: Map) => {
-      if (syncing) return;
-      syncing = true;
-      target.jumpTo({
-        center: source.getCenter(),
-        zoom: source.getZoom(),
-        bearing: source.getBearing(),
-        pitch: source.getPitch(),
-      });
-      requestAnimationFrame(() => { syncing = false; });
+            sources,
+
+            layers,
+        },
+
+        usingSatellite:
+            Boolean(
+                resolvedDate &&
+                layerInfo,
+            ),
     };
+}
 
-    a.on("move", () => sync(a, b));
-    b.on("move", () => sync(b, a));
+/* -------------------------------------------------------------------------- */
+/* Safe map removal                                                           */
+/* -------------------------------------------------------------------------- */
 
-    return () => {
-      a.remove();
-      b.remove();
-    };
-  }, []);
+function safeRemove(
+    map:
+        | Map
+        | null
+        | undefined,
+) {
+    if (!map) {
+        return;
+    }
 
-  return (
-    <section className="map-grid">
-      <div className="map-panel">
-        <div className="map-label">Before</div>
-        <div ref={left} className="map" />
-      </div>
-      <div className="map-panel">
-        <div className="map-label">After</div>
-        <div ref={right} className="map" />
-      </div>
-    </section>
-  );
+    try {
+        map.remove();
+    } catch {
+        // Map già rimossa.
+    }
+}
+
+/* -------------------------------------------------------------------------- */
+/* OSM fallback                                                               */
+/* -------------------------------------------------------------------------- */
+
+function switchMapToOsm(
+    map: Map,
+) {
+    try {
+        if (
+            map.getLayer(
+                "satellite",
+            )
+        ) {
+            map.removeLayer(
+                "satellite",
+            );
+        }
+
+        if (
+            map.getSource(
+                "satellite",
+            )
+        ) {
+            map.removeSource(
+                "satellite",
+            );
+        }
+
+        if (
+            !map.getSource("osm")
+        ) {
+            map.addSource(
+                "osm",
+                osmSource() as maplibregl.RasterSourceSpecification,
+            );
+        }
+
+        if (
+            !map.getLayer("osm")
+        ) {
+            const beforeId =
+                map.getLayer(
+                    "changes",
+                )
+                    ? "changes"
+                    : undefined;
+
+            map.addLayer(
+                {
+                    id: "osm",
+
+                    type: "raster",
+
+                    source: "osm",
+                },
+
+                beforeId,
+            );
+        }
+    } catch {
+        // Style già rimossa.
+    }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Component                                                                  */
+/* -------------------------------------------------------------------------- */
+
+export default function DualMap({
+                                    beforeLabel,
+                                    afterLabel,
+                                    beforeDate,
+                                    afterDate,
+                                    imagery,
+                                    changes = [],
+                                    initialCenter,
+                                    initialZoom,
+                                    viewKey,
+                                }: Props) {
+    const left =
+        useRef<HTMLDivElement>(
+            null,
+        );
+
+    const right =
+        useRef<HTMLDivElement>(
+            null,
+        );
+
+    const leftMap =
+        useRef<Map | null>(null);
+
+    const rightMap =
+        useRef<Map | null>(null);
+
+    /* ------------------------------------------------------------------------ */
+    /* Persisted map view                                                       */
+    /* ------------------------------------------------------------------------ */
+
+    const viewState =
+        useRef<{
+            center: [
+                number,
+                number,
+            ];
+
+            zoom: number;
+
+            bearing: number;
+
+            pitch: number;
+
+            viewKey?: string;
+        } | null>(null);
+
+    const [
+        resolvedBefore,
+        setResolvedBefore,
+    ] = useState<
+        string | null
+    >(null);
+
+    const [
+        resolvedAfter,
+        setResolvedAfter,
+    ] = useState<
+        string | null
+    >(null);
+
+    const [
+        leftFellBack,
+        setLeftFellBack,
+    ] = useState(false);
+
+    const [
+        rightFellBack,
+        setRightFellBack,
+    ] = useState(false);
+
+    const [
+        resolving,
+        setResolving,
+    ] = useState(false);
+
+    /* ------------------------------------------------------------------------ */
+    /* Initialize protocol                                                      */
+    /* ------------------------------------------------------------------------ */
+
+    useEffect(() => {
+        registerCopernicusProtocol();
+    }, []);
+
+    /* ------------------------------------------------------------------------ */
+    /* Resolve dates                                                            */
+    /* ------------------------------------------------------------------------ */
+
+    useEffect(() => {
+        let cancelled =
+            false;
+
+        const tileImagery =
+            resolveImageryForTiles(
+                imagery,
+            );
+
+        const layerInfo =
+            gibsLayerInfo(
+                tileImagery,
+            );
+
+        setLeftFellBack(false);
+        setRightFellBack(false);
+
+        if (
+            !layerInfo ||
+            (!beforeDate &&
+                !afterDate)
+        ) {
+            setResolvedBefore(
+                null,
+            );
+
+            setResolvedAfter(
+                null,
+            );
+
+            setResolving(
+                false,
+            );
+
+            return;
+        }
+
+        setResolving(true);
+
+        (async () => {
+            try {
+                await initCopernicusWmts();
+
+                if (cancelled) {
+                    return;
+                }
+
+                const [
+                    before,
+                    after,
+                ] =
+                    await Promise.all([
+                        beforeDate
+                            ? resolveGibsDate(
+                                tileImagery,
+                                beforeDate,
+                            )
+                            : Promise.resolve(
+                                null,
+                            ),
+
+                        afterDate
+                            ? resolveGibsDate(
+                                tileImagery,
+                                afterDate,
+                            )
+                            : Promise.resolve(
+                                null,
+                            ),
+                    ]);
+
+                if (cancelled) {
+                    return;
+                }
+
+                setResolvedBefore(
+                    before,
+                );
+
+                setResolvedAfter(
+                    after,
+                );
+            } catch {
+                if (cancelled) {
+                    return;
+                }
+
+                setResolvedBefore(
+                    beforeDate
+                        ? beforeDate.slice(
+                            0,
+                            10,
+                        )
+                        : null,
+                );
+
+                setResolvedAfter(
+                    afterDate
+                        ? afterDate.slice(
+                            0,
+                            10,
+                        )
+                        : null,
+                );
+            } finally {
+                if (!cancelled) {
+                    setResolving(false);
+                }
+            }
+        })();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [
+        imagery,
+        beforeDate,
+        afterDate,
+    ]);
+
+    /* ------------------------------------------------------------------------ */
+    /* Create maps                                                              */
+    /* ------------------------------------------------------------------------ */
+
+    useEffect(() => {
+        if (
+            !left.current ||
+            !right.current
+        ) {
+            return;
+        }
+
+        const tileImagery =
+            resolveImageryForTiles(
+                imagery,
+            );
+
+        const layerInfo =
+            gibsLayerInfo(
+                tileImagery,
+            );
+
+        const satelliteReady =
+            Boolean(
+                layerInfo &&
+                resolvedBefore &&
+                resolvedAfter,
+            );
+
+        if (
+            layerInfo &&
+            beforeDate &&
+            afterDate &&
+            !resolving &&
+            !satelliteReady
+        ) {
+            return;
+        }
+
+        const leftResult =
+            buildStyle(
+                imagery,
+                resolvedBefore,
+                changes,
+            );
+
+        const rightResult =
+            buildStyle(
+                imagery,
+                resolvedAfter,
+                changes,
+            );
+
+        /* ---------------------------------------------------------------------- */
+        /* Determine initial view                                                 */
+        /* ---------------------------------------------------------------------- */
+
+        const previousView =
+            viewState.current;
+
+        /**
+         * Se il viewKey è cambiato significa:
+         *
+         * NUOVO EVENTO
+         *
+         * quindi dobbiamo usare lat/lon/zoom
+         * del nuovo evento.
+         */
+        const eventChanged =
+            previousView !== null &&
+            previousView.viewKey !==
+            viewKey;
+
+        /**
+         * Primo caricamento:
+         * usa direttamente initialCenter/initialZoom.
+         *
+         * Cambio evento:
+         * usa direttamente initialCenter/initialZoom.
+         *
+         * Cambio imagery/date:
+         * mantiene previousView.
+         */
+        const shouldUseEventView =
+            previousView === null ||
+            eventChanged;
+
+        const nextCenter =
+            shouldUseEventView
+                ? initialCenter ??
+                GAZA_CENTER
+                : previousView.center;
+
+        const nextZoom =
+            shouldUseEventView
+                ? initialZoom ??
+                DEFAULT_ZOOM
+                : previousView.zoom;
+
+        const nextBearing =
+            shouldUseEventView
+                ? 0
+                : previousView.bearing;
+
+        const nextPitch =
+            shouldUseEventView
+                ? 0
+                : previousView.pitch;
+
+        const a =
+            new maplibregl.Map({
+                container:
+                left.current,
+
+                style:
+                leftResult.style,
+
+                center:
+                nextCenter,
+
+                zoom:
+                nextZoom,
+
+                bearing:
+                nextBearing,
+
+                pitch:
+                nextPitch,
+
+                minZoom: 3,
+
+                maxZoom: 18,
+            });
+
+        const b =
+            new maplibregl.Map({
+                container:
+                right.current,
+
+                style:
+                rightResult.style,
+
+                center:
+                nextCenter,
+
+                zoom:
+                nextZoom,
+
+                bearing:
+                nextBearing,
+
+                pitch:
+                nextPitch,
+
+                minZoom: 3,
+
+                maxZoom: 18,
+            });
+
+        leftMap.current =
+            a;
+
+        rightMap.current =
+            b;
+
+        let leftErrors = 0;
+        let rightErrors = 0;
+
+        let leftSwitched = false;
+        let rightSwitched = false;
+
+        /* ---------------------------------------------------------------------- */
+        /* Error handling                                                         */
+        /* ---------------------------------------------------------------------- */
+
+        const onLeftError =
+            () => {
+                leftErrors += 1;
+
+                if (
+                    leftErrors >= 3 &&
+                    !leftSwitched
+                ) {
+                    leftSwitched =
+                        true;
+
+                    switchMapToOsm(
+                        a,
+                    );
+
+                    setLeftFellBack(
+                        true,
+                    );
+                }
+            };
+
+        const onRightError =
+            () => {
+                rightErrors += 1;
+
+                if (
+                    rightErrors >= 3 &&
+                    !rightSwitched
+                ) {
+                    rightSwitched =
+                        true;
+
+                    switchMapToOsm(
+                        b,
+                    );
+
+                    setRightFellBack(
+                        true,
+                    );
+                }
+            };
+
+        a.on(
+            "error",
+            onLeftError,
+        );
+
+        b.on(
+            "error",
+            onRightError,
+        );
+
+        /* ---------------------------------------------------------------------- */
+        /* Synchronization                                                        */
+        /* ---------------------------------------------------------------------- */
+
+        let syncing = false;
+
+        const saveViewState =
+            (map: Map) => {
+                try {
+                    const center =
+                        map.getCenter();
+
+                    viewState.current = {
+                        center: [
+                            center.lng,
+                            center.lat,
+                        ],
+
+                        zoom:
+                            map.getZoom(),
+
+                        bearing:
+                            map.getBearing(),
+
+                        pitch:
+                            map.getPitch(),
+
+                        viewKey,
+                    };
+                } catch {
+                    // Map non disponibile.
+                }
+            };
+
+        const sync = (
+            source: Map,
+            target: Map,
+        ) => {
+            if (syncing) {
+                return;
+            }
+
+            syncing = true;
+
+            saveViewState(
+                source,
+            );
+
+            try {
+                target.jumpTo({
+                    center:
+                        source.getCenter(),
+
+                    zoom:
+                        source.getZoom(),
+
+                    bearing:
+                        source.getBearing(),
+
+                    pitch:
+                        source.getPitch(),
+                });
+            } catch {
+                // Target già rimossa.
+            }
+
+            requestAnimationFrame(
+                () => {
+                    syncing = false;
+                },
+            );
+        };
+
+        const onA =
+            () => {
+                saveViewState(a);
+
+                sync(
+                    a,
+                    b,
+                );
+            };
+
+        const onB =
+            () => {
+                saveViewState(b);
+
+                sync(
+                    b,
+                    a,
+                );
+            };
+
+        a.on(
+            "move",
+            onA,
+        );
+
+        b.on(
+            "move",
+            onB,
+        );
+
+        /**
+         * Salviamo la vista iniziale.
+         *
+         * viewKey è fondamentale:
+         * permette di distinguere un cambio evento
+         * da un cambio imagery.
+         */
+        saveViewState(a);
+
+        /* ---------------------------------------------------------------------- */
+        /* Cleanup                                                                */
+        /* ---------------------------------------------------------------------- */
+
+        return () => {
+            /**
+             * Prima di distruggere le mappe,
+             * conserviamo sempre l'ultima posizione.
+             */
+            if (
+                leftMap.current === a
+            ) {
+                saveViewState(a);
+            }
+
+            a.off(
+                "move",
+                onA,
+            );
+
+            b.off(
+                "move",
+                onB,
+            );
+
+            a.off(
+                "error",
+                onLeftError,
+            );
+
+            b.off(
+                "error",
+                onRightError,
+            );
+
+            leftMap.current =
+                null;
+
+            rightMap.current =
+                null;
+
+            safeRemove(a);
+            safeRemove(b);
+        };
+    }, [
+        imagery,
+        resolvedBefore,
+        resolvedAfter,
+        changes,
+        resolving,
+        beforeDate,
+        afterDate,
+        viewKey,
+        initialCenter,
+        initialZoom,
+    ]);
+
+    /* ------------------------------------------------------------------------ */
+    /* Captions                                                                 */
+    /* ------------------------------------------------------------------------ */
+
+    const tileImagery =
+        resolveImageryForTiles(
+            imagery,
+        );
+
+    const layerInfo =
+        gibsLayerInfo(
+            tileImagery,
+        );
+
+    let unavailableNote:
+        | string
+        | null = null;
+
+    if (!layerInfo) {
+        unavailableNote =
+            "SAR non disponibile in questa configurazione Copernicus.";
+    } else if (
+        !beforeDate ||
+        !afterDate
+    ) {
+        unavailableNote =
+            'Esegui "Detect changes" per scegliere le date reali dell’acquisizione.';
+    } else if (resolving) {
+        unavailableNote =
+            "Preparo le immagini Copernicus…";
+    } else if (
+        leftFellBack ||
+        rightFellBack
+    ) {
+        unavailableNote =
+            "Tile Copernicus non disponibili per questa richiesta — fallback automatico a OpenStreetMap.";
+    }
+
+    const beforeCaption =
+        unavailableNote ??
+        (
+            resolvedBefore
+                ? `${layerInfo?.label ?? ""} · Copernicus TIME ${resolvedBefore}`
+                : layerInfo?.label ??
+                "OpenStreetMap"
+        );
+
+    const afterCaption =
+        changes.length > 0
+            ? `${changes.length} change candidates`
+            : unavailableNote ??
+            (
+                resolvedAfter
+                    ? `${layerInfo?.label ?? ""} · Copernicus TIME ${resolvedAfter}`
+                    : layerInfo?.label ??
+                    "OpenStreetMap"
+            );
+
+    /* ------------------------------------------------------------------------ */
+    /* Render                                                                   */
+    /* ------------------------------------------------------------------------ */
+
+    return (
+        <section
+            className="map-grid"
+            aria-label={`Synchronized before and after maps, ${imagery}`}
+        >
+            <div className="map-panel">
+
+                <div className="map-label">
+
+                    <strong>
+                        Before
+                    </strong>
+
+                    <span>
+            {beforeLabel}
+          </span>
+
+                    <small>
+                        {beforeCaption}
+                    </small>
+
+                </div>
+
+                <div
+                    ref={left}
+                    className="map"
+                />
+
+            </div>
+
+            <div className="map-panel">
+
+                <div className="map-label">
+
+                    <strong>
+                        After
+                    </strong>
+
+                    <span>
+            {afterLabel}
+          </span>
+
+                    <small>
+                        {afterCaption}
+                    </small>
+
+                </div>
+
+                <div
+                    ref={right}
+                    className="map"
+                />
+
+            </div>
+        </section>
+    );
 }
