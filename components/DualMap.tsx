@@ -1,248 +1,249 @@
 "use client";
 
 import {
-    useEffect,
-    useRef,
-    useState,
+  useEffect,
+  useRef,
+  useState,
 } from "react";
 
 import maplibregl, {
-    Map,
-    StyleSpecification,
+  Map,
+  StyleSpecification,
 } from "maplibre-gl";
 
-import type {
-    ChangeFeature,
-} from "../src/domain/change";
+import type { ChangeFeature } from "../src/domain/change";
 
 import {
-    gibsLayerInfo,
-    initCopernicusWmts,
-    getCopernicusWmtsMatrixSet,
-    copernicusGetTileUrl,
-    resolveGibsDate,
-    type WmtsTileMatrixSet,
+  gibsLayerInfo,
+  initCopernicusWmts,
+  getCopernicusWmtsMatrixSet,
+  copernicusGetTileUrl,
+  resolveGibsDate,
+  type WmtsTileMatrixSet,
 } from "../src/services/gibs";
 
 export type Imagery =
-    | "true-color"
-    | "infrared"
-    | "vegetation"
-    | "sar"
-    | "difference";
+  | "true-color"
+  | "infrared"
+  | "vegetation"
+  | "sar"
+  | "difference";
 
 type Props = {
-    beforeLabel: string;
-    afterLabel: string;
+  beforeLabel: string;
+  afterLabel: string;
 
-    beforeDate?: string;
-    afterDate?: string;
+  beforeDate?: string;
+  afterDate?: string;
 
-    imagery: Imagery;
+  imagery: Imagery;
 
-    changes?: ChangeFeature[];
+  changes?: ChangeFeature[];
 
-    /**
-     * Posizione iniziale associata all'evento.
-     *
-     * Viene utilizzata quando cambia viewKey.
-     */
-    initialCenter?: [
-        number,
-        number,
-    ];
+  /*
+   * Posizione iniziale dell'evento.
+   *
+   * Viene utilizzata SOLO quando cambia viewKey.
+   */
+  initialCenter?: [
+    number,
+    number,
+  ];
 
-    initialZoom?: number;
+  initialZoom?: number;
 
-    /**
-     * Identifica l'evento corrente.
-     *
-     * Se cambia:
-     * - viene utilizzata initialCenter
-     * - viene utilizzato initialZoom
-     *
-     * Se NON cambia:
-     * - imagery/date changes mantengono
-     *   la posizione corrente.
-     */
-    viewKey?: string;
+  /*
+   * Identifica l'evento corrente.
+   *
+   * Cambiando evento cambia viewKey,
+   * quindi la mappa viene portata
+   * sulla posizione dell'evento.
+   *
+   * Cambiando imagery/date/change detection
+   * viewKey resta uguale e la posizione
+   * viene mantenuta.
+   */
+  viewKey?: string;
 };
 
 const GAZA_CENTER: [
-    number,
-    number,
+  number,
+  number,
 ] = [
-    34.46,
-    31.42,
+  34.46,
+  31.42,
 ];
 
-const DEFAULT_ZOOM = 11;
-
 const OSM_ATTRIBUTION =
-    "© OpenStreetMap contributors";
+  "© OpenStreetMap contributors";
 
 const COPERNICUS_ATTRIBUTION =
-    "© Copernicus Data Space Ecosystem";
+  "© Copernicus Data Space Ecosystem";
 
 const COPERNICUS_PROTOCOL =
-    "copernicus";
+  "copernicus";
 
 /* -------------------------------------------------------------------------- */
-/* Custom MapLibre protocol                                                   */
+/* Custom MapLibre protocol                                                  */
 /* -------------------------------------------------------------------------- */
 
 let copernicusProtocolRegistered =
-    false;
+  false;
 
 function registerCopernicusProtocol() {
-    if (
-        copernicusProtocolRegistered
-    ) {
-        return;
-    }
+  if (
+    copernicusProtocolRegistered
+  ) {
+    return;
+  }
 
-    maplibregl.addProtocol(
-        COPERNICUS_PROTOCOL,
-        async (
-            requestParameters,
-            abortController,
-        ) => {
-            const url =
-                new URL(
-                    requestParameters.url,
-                );
+  maplibregl.addProtocol(
+    COPERNICUS_PROTOCOL,
+    async (
+      requestParameters,
+      abortController,
+    ) => {
+      const url =
+        new URL(
+          requestParameters.url,
+        );
 
-            const imagery =
-                decodeURIComponent(
-                    url.hostname,
-                ) as Imagery;
+      const imagery =
+        decodeURIComponent(
+          url.hostname,
+        ) as Imagery;
 
-            const parts =
-                url.pathname
-                    .split("/")
-                    .filter(Boolean)
-                    .map(decodeURIComponent);
+      const parts =
+        url.pathname
+          .split("/")
+          .filter(Boolean)
+          .map(
+            decodeURIComponent,
+          );
 
-            const date =
-                parts[0];
+      const date =
+        parts[0];
 
-            const z =
-                Number(parts[1]);
+      const z =
+        Number(parts[1]);
 
-            const x =
-                Number(parts[2]);
+      const x =
+        Number(parts[2]);
 
-            const y =
-                Number(parts[3]);
+      const y =
+        Number(parts[3]);
 
-            if (
-                !date ||
-                !Number.isInteger(z) ||
-                !Number.isInteger(x) ||
-                !Number.isInteger(y)
-            ) {
-                throw new Error(
-                    `Invalid Copernicus tile URL: ${requestParameters.url}`,
-                );
-            }
+      if (
+        !date ||
+        !Number.isInteger(z) ||
+        !Number.isInteger(x) ||
+        !Number.isInteger(y)
+      ) {
+        throw new Error(
+          `Invalid Copernicus tile URL: ${requestParameters.url}`,
+        );
+      }
 
-            const tileUrl =
-                copernicusGetTileUrl(
-                    imagery,
-                    date,
-                    z,
-                    x,
-                    y,
-                );
+      const tileUrl =
+        copernicusGetTileUrl(
+          imagery,
+          date,
+          z,
+          x,
+          y,
+        );
 
-            if (!tileUrl) {
-                throw new Error(
-                    `Unable to build Copernicus tile URL for ${imagery}`,
-                );
-            }
+      if (!tileUrl) {
+        throw new Error(
+          `Unable to build Copernicus tile URL for ${imagery}`,
+        );
+      }
 
-            const response =
-                await fetch(
-                    tileUrl,
-                    {
-                        signal:
-                        abortController.signal,
-                    },
-                );
+      const response =
+        await fetch(
+          tileUrl,
+          {
+            signal:
+              abortController.signal,
+          },
+        );
 
-            if (!response.ok) {
-                throw new Error(
-                    `Copernicus WMTS ${response.status}: ${response.statusText}`,
-                );
-            }
+      if (!response.ok) {
+        throw new Error(
+          `Copernicus WMTS ${response.status}: ${response.statusText}`,
+        );
+      }
 
-            const data =
-                await response.arrayBuffer();
+      const data =
+        await response.arrayBuffer();
 
-            return {
-                data,
-            };
-        },
-    );
+      return {
+        data,
+      };
+    },
+  );
 
-    copernicusProtocolRegistered =
-        true;
+  copernicusProtocolRegistered =
+    true;
 }
 
 /* -------------------------------------------------------------------------- */
-/* Helpers                                                                     */
+/* Helpers                                                                    */
 /* -------------------------------------------------------------------------- */
 
 function changeGeoJSON(
-    changes: ChangeFeature[],
+  changes: ChangeFeature[],
 ): GeoJSON.FeatureCollection {
-    return {
-        type: "FeatureCollection",
+  return {
+    type: "FeatureCollection",
 
-        features:
-            changes.map((c) => ({
-                type: "Feature",
+    features:
+      changes.map(
+        (c) => ({
+          type: "Feature",
 
-                properties: {
-                    confidence:
-                    c.confidence,
-                },
+          properties: {
+            confidence:
+              c.confidence,
+          },
 
-                geometry:
-                c.geometry,
-            })),
-    };
+          geometry:
+            c.geometry,
+        }),
+      ),
+  };
 }
 
 function resolveImageryForTiles(
-    imagery: Imagery,
+  imagery: Imagery,
 ): Exclude<
-    Imagery,
-    "difference"
+  Imagery,
+  "difference"
 > {
-    if (
-        imagery === "difference"
-    ) {
-        return "true-color";
-    }
+  if (
+    imagery ===
+    "difference"
+  ) {
+    return "true-color";
+  }
 
-    return imagery;
+  return imagery;
 }
 
 function osmSource():
-    StyleSpecification["sources"][string] {
-    return {
-        type: "raster",
+  StyleSpecification["sources"][string] {
+  return {
+    type: "raster",
 
-        tiles: [
-            "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-        ],
+    tiles: [
+      "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+    ],
 
-        tileSize: 256,
+    tileSize: 256,
 
-        attribution:
-        OSM_ATTRIBUTION,
-    };
+    attribution:
+      OSM_ATTRIBUTION,
+  };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -250,50 +251,54 @@ function osmSource():
 /* -------------------------------------------------------------------------- */
 
 function copernicusSource(
-    imagery: Exclude<
-        Imagery,
-        "difference"
-    >,
-    date: string,
-    maxzoom: number,
+  imagery: Exclude<
+    Imagery,
+    "difference"
+  >,
+  date: string,
+  maxzoom: number,
 ): StyleSpecification["sources"][string] {
-    const tileTemplate =
-        `${COPERNICUS_PROTOCOL}://` +
-        `${encodeURIComponent(
-            imagery,
-        )}/` +
-        `${encodeURIComponent(
-            date,
-        )}/{z}/{x}/{y}`;
+  const tileTemplate =
+    `${COPERNICUS_PROTOCOL}://` +
+`${encodeURIComponent(
+    imagery,
+)}/` +
+`${encodeURIComponent(
+    date,
+)}/{z}/{x}/{y}`;
 
-    return {
-        type: "raster",
+return {
+    type: "raster",
 
-        tiles: [
-            tileTemplate,
-        ],
+    tiles: [
+        tileTemplate,
+    ],
 
-        tileSize: 512,
+    tileSize: 512,
 
-        maxzoom,
+    maxzoom,
 
-        attribution:
-        COPERNICUS_ATTRIBUTION,
-    };
+    attribution:
+    COPERNICUS_ATTRIBUTION,
+};
 }
 
 function getMaxMapLibreZoom(
     matrixSet: WmtsTileMatrixSet,
     fallback: number,
 ): number {
-    let maxZoom = fallback;
+    let maxZoom =
+        fallback;
 
     for (
-        const matrix of matrixSet.matrices
+        const matrix of
+        matrixSet.matrices
         ) {
         if (
-            matrix.tileWidth !== 512 ||
-            matrix.tileHeight !== 512
+            matrix.tileWidth !==
+            512 ||
+            matrix.tileHeight !==
+            512
         ) {
             continue;
         }
@@ -304,7 +309,9 @@ function getMaxMapLibreZoom(
             );
 
         if (
-            Number.isInteger(zoom) &&
+            Number.isInteger(
+                zoom,
+            ) &&
             zoom > maxZoom
         ) {
             maxZoom = zoom;
@@ -346,7 +353,8 @@ function buildStyle(
         matrixSet
             ? getMaxMapLibreZoom(
                 matrixSet,
-                layerInfo?.maxNativeZoom ??
+                layerInfo
+                    ?.maxNativeZoom ??
                 18,
             )
             : 18;
@@ -384,10 +392,12 @@ function buildStyle(
 
             type: "raster",
 
-            source: "satellite",
+            source:
+                "satellite",
 
             paint: {
-                "raster-opacity": 1,
+                "raster-opacity":
+                    1,
             },
         });
     } else {
@@ -411,7 +421,8 @@ function buildStyle(
         source: "changes",
 
         paint: {
-            "fill-opacity": 0.42,
+            "fill-opacity":
+                0.42,
 
             "fill-outline-color":
                 "#ffffff",
@@ -531,9 +542,9 @@ export default function DualMap({
                                     afterDate,
                                     imagery,
                                     changes = [],
-                                    initialCenter,
-                                    initialZoom,
-                                    viewKey,
+                                    initialCenter = GAZA_CENTER,
+                                    initialZoom = 11,
+                                    viewKey = "default",
                                 }: Props) {
     const left =
         useRef<HTMLDivElement>(
@@ -546,10 +557,14 @@ export default function DualMap({
         );
 
     const leftMap =
-        useRef<Map | null>(null);
+        useRef<Map | null>(
+            null,
+        );
 
     const rightMap =
-        useRef<Map | null>(null);
+        useRef<Map | null>(
+            null,
+        );
 
     /* ------------------------------------------------------------------------ */
     /* Persisted map view                                                       */
@@ -567,9 +582,20 @@ export default function DualMap({
             bearing: number;
 
             pitch: number;
-
-            viewKey?: string;
         } | null>(null);
+
+    /*
+     * L'ultimo viewKey effettivamente applicato.
+     *
+     * Serve per distinguere:
+     *
+     * - cambio evento → nuova posizione;
+     * - cambio imagery/data → mantieni posizione.
+     */
+    const appliedViewKey =
+        useRef<
+            string | null
+        >(null);
 
     const [
         resolvedBefore,
@@ -626,8 +652,13 @@ export default function DualMap({
                 tileImagery,
             );
 
-        setLeftFellBack(false);
-        setRightFellBack(false);
+        setLeftFellBack(
+            false,
+        );
+
+        setRightFellBack(
+            false,
+        );
 
         if (
             !layerInfo ||
@@ -649,7 +680,9 @@ export default function DualMap({
             return;
         }
 
-        setResolving(true);
+        setResolving(
+            true,
+        );
 
         (async () => {
             try {
@@ -718,7 +751,9 @@ export default function DualMap({
                 );
             } finally {
                 if (!cancelled) {
-                    setResolving(false);
+                    setResolving(
+                        false,
+                    );
                 }
             }
         })();
@@ -785,61 +820,51 @@ export default function DualMap({
                 changes,
             );
 
-        /* ---------------------------------------------------------------------- */
-        /* Determine initial view                                                 */
-        /* ---------------------------------------------------------------------- */
+        /*
+         * --------------------------------------------------------------
+         * VIEW LOGIC
+         * --------------------------------------------------------------
+         *
+         * Se viewKey è cambiato:
+         *
+         *   → nuovo evento
+         *   → usa initialCenter / initialZoom
+         *
+         * Se viewKey è uguale:
+         *
+         *   → imagery/date/change update
+         *   → conserva viewState
+         */
+        const eventChanged =
+            appliedViewKey.current !==
+            viewKey;
 
         const previousView =
             viewState.current;
 
-        /**
-         * Se il viewKey è cambiato significa:
-         *
-         * NUOVO EVENTO
-         *
-         * quindi dobbiamo usare lat/lon/zoom
-         * del nuovo evento.
-         */
-        const eventChanged =
-            previousView !== null &&
-            previousView.viewKey !==
-            viewKey;
+        const center =
+            eventChanged
+                ? initialCenter
+                : previousView?.center ??
+                initialCenter;
 
-        /**
-         * Primo caricamento:
-         * usa direttamente initialCenter/initialZoom.
-         *
-         * Cambio evento:
-         * usa direttamente initialCenter/initialZoom.
-         *
-         * Cambio imagery/date:
-         * mantiene previousView.
-         */
-        const shouldUseEventView =
-            previousView === null ||
-            eventChanged;
+        const zoom =
+            eventChanged
+                ? initialZoom
+                : previousView?.zoom ??
+                initialZoom;
 
-        const nextCenter =
-            shouldUseEventView
-                ? initialCenter ??
-                GAZA_CENTER
-                : previousView.center;
-
-        const nextZoom =
-            shouldUseEventView
-                ? initialZoom ??
-                DEFAULT_ZOOM
-                : previousView.zoom;
-
-        const nextBearing =
-            shouldUseEventView
+        const bearing =
+            eventChanged
                 ? 0
-                : previousView.bearing;
+                : previousView?.bearing ??
+                0;
 
-        const nextPitch =
-            shouldUseEventView
+        const pitch =
+            eventChanged
                 ? 0
-                : previousView.pitch;
+                : previousView?.pitch ??
+                0;
 
         const a =
             new maplibregl.Map({
@@ -849,17 +874,13 @@ export default function DualMap({
                 style:
                 leftResult.style,
 
-                center:
-                nextCenter,
+                center,
 
-                zoom:
-                nextZoom,
+                zoom,
 
-                bearing:
-                nextBearing,
+                bearing,
 
-                pitch:
-                nextPitch,
+                pitch,
 
                 minZoom: 3,
 
@@ -874,17 +895,13 @@ export default function DualMap({
                 style:
                 rightResult.style,
 
-                center:
-                nextCenter,
+                center,
 
-                zoom:
-                nextZoom,
+                zoom,
 
-                bearing:
-                nextBearing,
+                bearing,
 
-                pitch:
-                nextPitch,
+                pitch,
 
                 minZoom: 3,
 
@@ -897,11 +914,17 @@ export default function DualMap({
         rightMap.current =
             b;
 
+        appliedViewKey.current =
+            viewKey;
+
         let leftErrors = 0;
         let rightErrors = 0;
 
-        let leftSwitched = false;
-        let rightSwitched = false;
+        let leftSwitched =
+            false;
+
+        let rightSwitched =
+            false;
 
         /* ---------------------------------------------------------------------- */
         /* Error handling                                                         */
@@ -963,7 +986,8 @@ export default function DualMap({
         /* Synchronization                                                        */
         /* ---------------------------------------------------------------------- */
 
-        let syncing = false;
+        let syncing =
+            false;
 
         const saveViewState =
             (map: Map) => {
@@ -971,23 +995,22 @@ export default function DualMap({
                     const center =
                         map.getCenter();
 
-                    viewState.current = {
-                        center: [
-                            center.lng,
-                            center.lat,
-                        ],
+                    viewState.current =
+                        {
+                            center: [
+                                center.lng,
+                                center.lat,
+                            ],
 
-                        zoom:
-                            map.getZoom(),
+                            zoom:
+                                map.getZoom(),
 
-                        bearing:
-                            map.getBearing(),
+                            bearing:
+                                map.getBearing(),
 
-                        pitch:
-                            map.getPitch(),
-
-                        viewKey,
-                    };
+                            pitch:
+                                map.getPitch(),
+                        };
                 } catch {
                     // Map non disponibile.
                 }
@@ -1062,12 +1085,8 @@ export default function DualMap({
             onB,
         );
 
-        /**
-         * Salviamo la vista iniziale.
-         *
-         * viewKey è fondamentale:
-         * permette di distinguere un cambio evento
-         * da un cambio imagery.
+        /*
+         * Salviamo la posizione iniziale.
          */
         saveViewState(a);
 
@@ -1076,7 +1095,7 @@ export default function DualMap({
         /* ---------------------------------------------------------------------- */
 
         return () => {
-            /**
+            /*
              * Prima di distruggere le mappe,
              * conserviamo sempre l'ultima posizione.
              */
@@ -1154,7 +1173,7 @@ export default function DualMap({
         !afterDate
     ) {
         unavailableNote =
-            'Esegui "Detect changes" per scegliere le date reali dell’acquisizione.';
+            'Seleziona due date sulla timeline.';
     } else if (resolving) {
         unavailableNote =
             "Preparo le immagini Copernicus…";
@@ -1195,6 +1214,7 @@ export default function DualMap({
             className="map-grid"
             aria-label={`Synchronized before and after maps, ${imagery}`}
         >
+
             <div className="map-panel">
 
                 <div className="map-label">
@@ -1244,6 +1264,7 @@ export default function DualMap({
                 />
 
             </div>
+
         </section>
     );
 }

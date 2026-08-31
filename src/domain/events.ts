@@ -1,28 +1,44 @@
 export type EventCategory =
-  | "conflict"
-  | "infrastructure"
-  | "urban"
-  | "environment"
-  | "other";
+    | "conflict"
+    | "infrastructure"
+    | "urban"
+    | "environment"
+    | "other"
+    | "reference"
+    | "destruction"
+    | "north-gaza"
+    | "gaza-city"
+    | "khan-younis"
+    | "central-gaza"
+    | "rafah";
 
 export type AtlasEvent = {
   id: string;
   title: string;
   date: string;
+
   categories: EventCategory[];
+
   sources: string[];
+
   notes?: string;
-  bbox: [number, number, number, number];
+
+  bbox: [
+    number,
+    number,
+    number,
+    number,
+  ];
 
   /**
-   * Vista iniziale della mappa per questo evento.
+   * Punto principale dell'evento.
    *
-   * lat/lon indicano il punto di maggiore interesse
-   * cartografico per l'evento.
-   *
-   * zoom indica il livello di dettaglio desiderato.
+   * Viene utilizzato dalla UI per:
+   * - centrare la mappa
+   * - impostare lo zoom iniziale
+   * - posizionare la timeline/event marker
    */
-  lat?: number;
-  lon?: number;
-  zoom?: number;
+  lat: number;
+  lon: number;
+  zoom: number;
 };
